@@ -7,7 +7,7 @@ int main(int argc, char * argv[]){
 	FILE* requester_log;
 	FILE* resolver_log;
 	
-	//number of threads as input -> int
+	//number of threads
 	int num_req;
 	int num_res;
 	sscanf(argv[1], "%d", &num_req);
@@ -42,7 +42,7 @@ int main(int argc, char * argv[]){
 				fclose(resolver_log);
 				gettimeofday(&end, NULL);
 				double elapsed = (end.tv_sec - begin.tv_sec) + ((end.tv_usec - begin.tv_usec)/1000000.0);
-				printf("time elapsed: %f\n", elapsed);
+				printf("./multi-lookup: total time is %f seconds\n", elapsed);
 				exit(0);
 			}else{
 				ERROR("Resolver Log Creation Error\n")
@@ -63,19 +63,43 @@ void spawn_threads(int num_requester, int num_resolver, int numFiles, char ** in
 	pthread_mutex_t M_Requester_log = PTHREAD_MUTEX_INITIALIZER;
 
 	int count = 0;
-	int stop = 0;
 	//initalize shared buffer
-	struct queue* pt = newQueue(ARRAY_SIZE);
+		pthread_mutex_t M_buf = PTHREAD_MUTEX_INITIALIZER;
+		pthread_cond_t out = PTHREAD_COND_INITIALIZER;
+		pthread_cond_t in = PTHREAD_COND_INITIALIZER;
+		
+		struct queue q;
+		struct queue *pt = &q;
+
+		//initalize array
+		char* items[ARRAY_SIZE];
+		for(int m = 0; m<ARRAY_SIZE; m++){ 
+			items[m] = "";
+		}
+
+		char ** a = items;
+		char * pill = "12345678\0";
+		char ** p = &pill;
+
+		pt -> M_buf = M_buf;
+		pt -> out_CV = out;
+		pt -> in_CV = in;
+		pt -> items = a;
+		pt -> maxsize = ARRAY_SIZE;
+		pt -> pill = p;
+		pt -> front = 0;
+		pt -> rear = -1;
+		pt -> size = 0;
 
 	//spawn threads
 		//producer
 			struct producer_t prod_t[num_requester];
 
 			for(int i = 0; i < num_requester; i++){
-				prod_t[i].tid = &req_tid[i]; //replace with constructor
 				prod_t[i].M = M;
 				prod_t[i].M_log = M_Requester_log;
 				prod_t[i].inputs = inputs;
+				prod_t[i].filesServiced = 0;
 				prod_t[i].log = requester_log;
 				prod_t[i].count = &count;
 				prod_t[i].numFiles = numFiles;
@@ -87,11 +111,11 @@ void spawn_threads(int num_requester, int num_resolver, int numFiles, char ** in
 		//consumer
 			struct consumer_t cons_t[num_resolver];
 			for(int j = 0; j < num_resolver; j++){
-				cons_t[j].tid = &res_tid[j];
 				cons_t[j].log = resolver_log;
 				cons_t[j].M_log = M_Resolver_log;
+				cons_t[j].numResolved = 0;
 				cons_t[j].queue = pt;
-				cons_t[j].stop = &stop;
+				///cons_t[j].stop = &stop;
 				if(pthread_create(&res_tid[j], NULL, consumer, (void *)&cons_t[j]) != 0){
 					ERROR("Pthread Create Error");	
 				}
@@ -102,11 +126,10 @@ void spawn_threads(int num_requester, int num_resolver, int numFiles, char ** in
 		pthread_join(req_tid[z], NULL);
 	}
 	for(int u = 0; u < num_resolver; u++){
-		enqueue(pt, pt->pill);
+		enqueue(pt, *pt->pill);
 	}
 
 	for(int x = 0; x < num_resolver; x++){
 		pthread_join(res_tid[x], NULL);
 	}
-	cleanup(pt);
 };
